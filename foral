@@ -1,0 +1,175 @@
+====================================================
+================ BOT.PY ======================
+====================================================
+
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import sqlite3
+
+# Replace with your bot token from BotFather
+TOKEN = '7755315464:AAHGWg9y_GazGvWjjA2rqsEIgK0wz_Yf8q8'
+
+def get_recent_data(symbol, limit):
+    conn = sqlite3.connect('market_data.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT close FROM prices WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?', (symbol, limit))
+    data = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return data[::-1]
+
+def calculate_sma(data, period):
+    if len(data) < period:
+        return None
+    return sum(data[-period:]) / period
+
+def calculate_ema(data, period):
+    if len(data) < period:
+        return None
+    sma = calculate_sma(data[:period], period)
+    multiplier = 2 / (period + 1)
+    ema = sma
+    for price in data[period:]:
+        ema = (price - ema) * multiplier + ema
+    return ema
+
+# Function to handle the /start command
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text('Hello! I am your trading assistant bot.')
+
+def report(update: Update, context: CallbackContext) -> None:
+    data = get_recent_data('SPY', 10)
+    if not data:
+        update.message.reply_text('Not enough data yet!')
+        return
+    current_price = data[-1]
+    sma = calculate_sma(data, 5)
+    ema = calculate_ema(data, 5)
+    message = f"Daily Report for SPY:\nCurrent Price: ${current_price:.2f}\nSMA (5): ${sma:.2f}\nEMA (5): ${ema:.2f}"
+    update.message.reply_text(message)
+
+def price(update: Update, context: CallbackContext) -> None:
+    if not context.args:
+        update.message.reply_text('Please provide an asset (e.g., /price SPY)')
+        return
+    symbol = context.args[0].upper()
+    data = get_recent_data(symbol, 1)
+    if not data:
+        update.message.reply_text(f'No data for {symbol} yet!')
+        return
+    update.message.reply_text(f'Current price of {symbol}: ${data[0]:.2f}')
+
+# Main function to set up and run the bot
+def main() -> None:
+    updater = Updater(TOKEN)
+    dispatcher = updater.dispatcher
+
+    # Add handlers for commands and messages
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("report", report))
+    dispatcher.add_handler(CommandHandler("price", price))
+
+    # Start the bot
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
+
+====================================================
+================ DATA_FETCHER.PY =================
+====================================================
+
+import requests
+import sqlite3
+import time
+
+API_KEY = 'MSISMONLFSNDPWWG'
+SYMBOL = 'SPY'  # S&P 500 ETF
+
+# Fetch data from Alpha Vantage
+def fetch_market_data():
+    url = f'https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={SYMBOL}&interval=1min&apikey={API_KEY}'
+    response = requests.get(url).json()
+    time_series = response.get('Time Series (1min)', {})
+    latest_time = max(time_series.keys())
+    latest_data = time_series[latest_time]
+    return {
+        'timestamp': latest_time,
+        'close': float(latest_data['4. close'])
+    }
+
+# Set up SQLite database
+def setup_database():
+    conn = sqlite3.connect('market_data.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS prices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            symbol TEXT,
+            close REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# Insert data into database
+def save_data(data):
+    conn = sqlite3.connect('market_data.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT INTO prices (timestamp, symbol, close) VALUES (?, ?, ?)',
+                   (data['timestamp'], SYMBOL, data['close']))
+    conn.commit()
+    conn.close()
+
+if __name__ == '__main__':
+    setup_database()
+    data = fetch_market_data()
+    save_data(data)
+    print(f"Saved: {data}")
+
+====================================================
+================ ANALYSIS.PY =====================
+====================================================
+
+import sqlite3
+
+# Fetch recent data from database
+def get_recent_data(symbol, limit):
+    conn = sqlite3.connect('market_data.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT close FROM prices WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?', (symbol, limit))
+    data = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return data[::-1]  # Reverse to chronological order
+
+# Simple Moving Average
+def calculate_sma(data, period):
+    if len(data) < period:
+        return None
+    return sum(data[-period:]) / period
+
+# Exponential Moving Average
+def calculate_ema(data, period):
+    if len(data) < period:
+        return None
+    sma = calculate_sma(data[:period], period)
+    multiplier = 2 / (period + 1)
+    ema = sma
+    for price in data[period:]:
+        ema = (price - ema) * multiplier + ema
+    return ema
+
+if __name__ == '__main__':
+    data = get_recent_data('SPY', 10)  # Last 10 prices
+    if data:
+        sma = calculate_sma(data, 5)
+        ema = calculate_ema(data, 5)
+        print(f"SMA (5): {sma:.2f}")
+        print(f"EMA (5): {ema:.2f}")
+
+====================================================
+================ TOKEN.TXT =======================
+====================================================
+
+AlphaVantage API Key : MSISMONLFSNDPWWG 
